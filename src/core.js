@@ -381,33 +381,12 @@ async function pruneNonCriticalCssLauncher ({
         getHasExited
       })
 
-      // 2. parse ast
-      // -> [BLOCK FOR] AST parsing
-      let ast
-      try {
-        ast = await astFromCss({
-          cssString,
-          strict
-        })
-      } catch (e) {
-        cleanupAndExit({ error: e })
-        return
-      }
-
-      // 3. Further process the ast [BLOCKING]
-      // Strip out non matching media queries.
-      // Need to be done before buildSelectorProfile;
-      // (very fast but could be done together/in parallel in future)
-      nonMatchingMediaQueryRemover(ast, width, height, keepLargerMediaQueries)
-      debuglog('stripped out non matching media queries')
-
       // -> [BLOCK FOR] page preparation
       page = await updatedPagePromise
       if (!page) {
         cleanupAndExit({ error: 'Could not open page in browser' })
         return
       }
-
       // load the page (slow) [NOT BLOCKING]
       const loadPagePromise = loadPage(
         page,
@@ -417,18 +396,6 @@ async function pruneNonCriticalCssLauncher ({
         pageLoadSkipTimeout,
         allowedResponseCode
       )
-
-      // turn css to formatted selectorlist [NOT BLOCKING]
-      debuglog('turn css to formatted selectorlist START')
-      const buildSelectorProfilePromise = buildSelectorProfile(
-        ast,
-        forceInclude && forceInclude.length ? forceInclude : null,
-        forceExclude && forceExclude.length ? forceExclude : null
-      ).then(res => {
-        debuglog('turn css to formatted selectorlist DONE')
-        return res
-      })
-
       // -> [BLOCK FOR] page load
       try {
         await loadPagePromise
@@ -443,7 +410,6 @@ async function pruneNonCriticalCssLauncher ({
         return
       }
       if (_hasExited) return
-
       // Penthouse waits for the `load` event to fire
       // (before loadPagePromise resolves; except for very slow loading pages)
       // (via default puppeteer page.goto options.waitUntil setting,
@@ -480,78 +446,132 @@ async function pruneNonCriticalCssLauncher ({
           })
         : Promise.resolve()
 
-      // -> [BLOCK FOR] css into formatted selectors list with "sourcemap"
-      // latter used to map back to full css rule
-      const { selectors, selectorNodeMap } = await buildSelectorProfilePromise
-
-      if (getHasExited()) {
-        return
-      }
-
-      // -> [BLOCK FOR] critical css selector pruning (in browser)
-      let criticalSelectors
-      try {
-        criticalSelectors = await page
-          .evaluate(pruneNonCriticalSelectors, {
-            selectors,
-            renderWaitTime,
-            maxElementsToCheckPerSelector
-          })
-          .then(criticalSelectors => {
-            debuglog('pruneNonCriticalSelectors done')
-            return criticalSelectors
-          })
-      } catch (err) {
-        debuglog('pruneNonCriticalSelector threw an error: ' + err)
-        const errorDueToPageUnloaded = PUPPETEER_PAGE_UNLOADED_DURING_EXECUTION_ERROR_REGEX.test(
-          err
-        )
-        cleanupAndExit({
-          error: errorDueToPageUnloaded
-            ? new Error(PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE)
-            : err
-        })
-        return
-      }
-      if (getHasExited()) {
-        return
-      }
-
-      // -> [BLOCK FOR] clean up final ast for critical css
-      debuglog('AST cleanup START')
-
-      // NOTE: this function mutates the AST
-      cleanupAst({
-        ast,
-        selectorNodeMap,
-        criticalSelectors,
-        propertiesToRemove,
-        maxEmbeddedBase64Length
-      })
-      debuglog('AST cleanup DONE')
-
+      // 2. parse ast
+      // -> [BLOCK FOR] AST parsing
       // -> [BLOCK FOR] generate final critical css from critical ast
-      const css = csstree.generate(ast)
-      debuglog('generated CSS from AST')
-
-      // take after screenshot (optional) [BLOCKING]
-      if (takeScreenshots) {
-        // wait for the before screenshot, before start modifying the page
-        await beforeScreenshotPromise
-        debuglog('inline critical styles for after screenshot')
-        await page.evaluate(replacePageCss, { css }).then(() => {
-          return grabPageScreenshot({
-            type: 'after',
-            page,
-            screenshots,
-            screenshotExtension,
-            debuglog
-          })
-        })
+      const result = {
+        atf: '',
+        btf: ''
       }
+      try {
+        for (const type in result) {
+          const ast = await astFromCss({
+            cssString,
+            strict
+          })
+          // 3. Further process the ast [BLOCKING]
+          // Strip out non matching media queries.
+          // Need to be done before buildSelectorProfile;
+          // (very fast but could be done together/in parallel in future)
+          nonMatchingMediaQueryRemover(
+            ast,
+            width,
+            height,
+            keepLargerMediaQueries
+          )
+          debuglog('stripped out non matching media queries')
+          // turn css to formatted selectorlist [NOT BLOCKING]
+          debuglog('turn css to formatted selectorlist START')
+          const buildSelectorProfilePromise = buildSelectorProfile(
+            ast,
+            forceInclude && forceInclude.length ? forceInclude : null,
+            forceExclude && forceExclude.length ? forceExclude : null
+          ).then(res => {
+            debuglog('turn css to formatted selectorlist DONE')
+            return res
+          })
+          // -> [BLOCK FOR] css into formatted selectors list with "sourcemap"
+          // latter used to map back to full css rule
+          const {
+            selectors,
+            selectorNodeMap
+          } = await buildSelectorProfilePromise
+
+          if (getHasExited()) {
+            return
+          }
+          // -> [BLOCK FOR] critical css selector pruning (in browser)
+          let criticalSelectors
+          try {
+            criticalSelectors = await page
+              .evaluate(pruneNonCriticalSelectors, {
+                type,
+                selectors,
+                renderWaitTime,
+                maxElementsToCheckPerSelector
+              })
+              .then(criticalSelectors => {
+                debuglog('pruneNonCriticalSelectors done')
+                return criticalSelectors
+              })
+          } catch (err) {
+            debuglog('pruneNonCriticalSelector threw an error: ' + err)
+            const errorDueToPageUnloaded = PUPPETEER_PAGE_UNLOADED_DURING_EXECUTION_ERROR_REGEX.test(
+              err
+            )
+            cleanupAndExit({
+              error: errorDueToPageUnloaded
+                ? new Error(PAGE_UNLOADED_DURING_EXECUTION_ERROR_MESSAGE)
+                : err
+            })
+            return
+          }
+          if (getHasExited()) {
+            return
+          }
+          // -> [BLOCK FOR] clean up final ast for critical css
+          debuglog('AST cleanup START')
+          // NOTE: this function mutates the AST
+          cleanupAst({
+            ast,
+            selectorNodeMap,
+            criticalSelectors,
+            propertiesToRemove,
+            maxEmbeddedBase64Length
+          })
+          debuglog('AST cleanup DONE')
+          debuglog('generated CSS from AST')
+          const css = csstree.generate(ast)
+          result[type] = css
+          // take after screenshot (optional) [BLOCKING]
+          if (takeScreenshots) {
+            // wait for the before screenshot, before start modifying the page
+            await beforeScreenshotPromise
+            debuglog('inline critical styles for after screenshot')
+            await page.evaluate(replacePageCss, { css }).then(() => {
+              return grabPageScreenshot({
+                type: 'after',
+                page,
+                screenshots,
+                screenshotExtension,
+                debuglog
+              })
+            })
+          }
+        }
+      } catch (e) {
+        cleanupAndExit({ error: e })
+        return
+      }
+      // for (const type in criticalSelectors) {
+      //   const ast = asts[type]
+      //   // -> [BLOCK FOR] clean up final ast for critical css
+      //   debuglog('AST cleanup START')
+      //   // NOTE: this function mutates the AST
+      //   cleanupAst({
+      //     ast,
+      //     selectorNodeMap,
+      //     criticalSelectors: criticalSelectors[type],
+      //     propertiesToRemove,
+      //     maxEmbeddedBase64Length
+      //   })
+      //   debuglog('AST cleanup DONE')
+      //   debuglog('generated CSS from AST')
+      //   result[type] = csstree.generate(ast)
+      // }
       debuglog('generateCriticalCss DONE')
 
-      cleanupAndExit({ returnValue: css })
+      cleanupAndExit({ returnValue: result })
     } catch (err) {
       reject(err)
     }

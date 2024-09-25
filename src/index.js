@@ -88,12 +88,12 @@ const generateCriticalCssWrapped = async function generateCriticalCssWrapped (
   )
 
   debuglog('call generateCriticalCssWrapped')
-  let formattedCss
+  let formattedStyles
   let pagePromise
   try {
     pagePromise = getOpenBrowserPage()
 
-    formattedCss = await generateCriticalCss({
+    formattedStyles = await generateCriticalCss({
       pagePromise,
       url: options.url,
       pageGotoOptions:
@@ -169,13 +169,13 @@ const generateCriticalCssWrapped = async function generateCriticalCssWrapped (
   })
 
   debuglog('generateCriticalCss done')
-  if (formattedCss.trim().length === 0) {
-    // TODO: would be good to surface this to user, always
-    debuglog('Note: Generated critical css was empty for URL: ' + options.url)
-    return ''
-  }
+  // if (formattedStyles.trim().length === 0) {
+  //   // TODO: would be good to surface this to user, always
+  //   debuglog('Note: Generated critical css was empty for URL: ' + options.url)
+  //   return ''
+  // }
 
-  return formattedCss
+  return formattedStyles
 }
 
 module.exports = async function (options, callback) {

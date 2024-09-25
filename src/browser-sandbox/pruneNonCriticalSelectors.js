@@ -1,6 +1,7 @@
 // executed inside sandboxed browser environment,
 // no access to scrope outside of function
 export default function pruneNonCriticalSelectors ({
+  type,
   selectors,
   maxElementsToCheckPerSelector
 }) {
@@ -11,6 +12,7 @@ export default function pruneNonCriticalSelectors ({
   // primarily because getBoundingClientRect() can be slow to query,
   // and some stylesheets have lots of generic selectors (like '.button', '.fa' etc)
   var isElementAboveFoldCache = new Map()
+  var isElementBelowFoldCache = new Map()
 
   function isElementAboveFold (element) {
     if (isElementAboveFoldCache.has(element)) {
@@ -53,7 +55,29 @@ export default function pruneNonCriticalSelectors ({
     return aboveFold
   }
 
-  function isSelectorCritical (selector) {
+  function isElementBelowFold (element) {
+    if (isElementBelowFoldCache.has(element)) {
+      return isElementBelowFoldCache.get(element)
+    }
+    const isElementStyleDefined = typeof element.style !== 'undefined'
+    if (isElementStyleDefined) {
+      var originalClearStyle = element.style.clear || ''
+      element.style.clear = 'none'
+    }
+
+    var belowFold = element.getBoundingClientRect().top > h
+    // cache so we dont have to re-query DOM for this value
+    isElementBelowFoldCache.set(element, belowFold)
+
+    if (isElementStyleDefined) {
+      // set clear style back to what it was
+      element.style.clear = originalClearStyle
+    }
+
+    return belowFold
+  }
+
+  function isSelectorCritical (selector, type) {
     // we have a selector to test, first grab any matching elements
     let elements
     try {
@@ -76,7 +100,20 @@ export default function pruneNonCriticalSelectors ({
 
     // only keep selectors that match at least one elements on the page above the fold
     for (let idx = 0; idx < nrElementsToCheck; idx++) {
-      if (isElementAboveFold(elements[idx])) {
+      const element = elements[idx]
+      const path = `${element.tagName}#${element.id}:${element.getAttribute(
+        'class'
+      )}`
+      if (type === 'atf' && isElementAboveFold(element)) {
+        console.log(
+          `debug: isSelectorCritical, selector: ${selector} is atf and find on ${path}`
+        )
+        return true
+      }
+      if (type === 'btf' && isElementBelowFold(element)) {
+        console.log(
+          `debug: isSelectorCritical, selector: ${selector} is btf and find on ${path}`
+        )
         return true
       }
     }
@@ -84,14 +121,14 @@ export default function pruneNonCriticalSelectors ({
     return false
   }
 
-  function filterSelectors (selectors) {
+  function filterSelectors (selectors, type) {
     console.log('debug: filterSelectors START')
 
-    selectors = selectors.filter(isSelectorCritical)
+    selectors = selectors.filter(element => isSelectorCritical(element, type))
 
     console.log('debug: filterSelectors DONE')
     return selectors
   }
 
-  return filterSelectors(selectors)
+  return filterSelectors(selectors, type)
 }
