@@ -242,6 +242,8 @@ async function preparePage ({
     // - the ones sent by penthouse for debugging has 'debug: ' prefix.
     if (/^debug: /.test(text)) {
       debuglog(text.replace(/^debug: /, ''))
+    } else {
+      debuglog('PAGE LOG:', msg.text())
     }
   })
   debuglog('page event listeners set')
